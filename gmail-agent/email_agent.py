@@ -159,12 +159,12 @@ def send_digest_email(service, summaries):
     email_text = "\n".join(body_lines)
 
     msg = MIMEText(email_text)
-    msg['to'] = 'nrj112@gmail.com'
+    msg['to'] = 'neha.purohit.ai@gmail.com'
     msg['subject'] = f"Daily Executive Email Digest - {today_str}"
 
     raw_msg = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     service.users().messages().send(userId='me', body={'raw': raw_msg}).execute()
-    print("[✓] Executive digest sent successfully to nrj112@gmail.com")
+    print("[✓] Executive digest sent successfully to neha.purohit.ai@gmail.com")
 
 def run_daily_agent():
     service = get_gmail_service()
