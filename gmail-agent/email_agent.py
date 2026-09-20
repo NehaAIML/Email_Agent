@@ -67,26 +67,29 @@ def mark_processed(conn, message_id):
 def analyze_with_llm(subject, sender, body):
     groq_key = os.environ.get("GROQ_API_KEY", "").strip()
 
-    prompt = f"""You are an executive email assistant.
-Analyze this email and return a JSON object with this exact structure:
+    prompt = f"""You are an executive assistant. Evaluate this email and output a strictly valid JSON response.
+
+Evaluation Criteria for Urgency:
+- High: Requires immediate personal action, time-sensitive security alert, critical business/financial deadline, or urgent direct human request.
+- Medium: Useful updates, newsletters of direct professional interest, scheduled upcoming calendar events, or non-critical account notifications.
+- Low: Marketing promotions, retail discount coupons, social media digests, automated notifications, or general bulk spam.
+
+Format your response strictly as this JSON structure:
 {{
   "subject": "{subject}",
   "sender": "{sender}",
-  "one_line_summary": "1-2 sentence executive summary",
-  "action_items": ["item 1", "item 2"],
-  "urgency": "High"
+  "one_line_summary": "<A 1-sentence synthesis of what this email is actually informing the reader>",
+  "action_items": ["<concise action item if any, otherwise leave empty>"],
+  "urgency": "<High, Medium, or Low>"
 }}
-Rules:
-- "urgency" must be one of: "High", "Medium", "Low"
-- Output valid JSON only without markdown formatting.
 
+Email to analyze:
 Subject: {subject}
 Sender: {sender}
-Body:
-{body[:2500]}
+Body Preview:
+{body[:2000]}
 """
 
-    # Cloud Execution via Groq
     if groq_key:
         try:
             from groq import Groq
@@ -94,48 +97,42 @@ Body:
             response = client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
-                    {"role": "system", "content": "You are a concise executive assistant. Output valid JSON only."},
+                    {"role": "system", "content": "You are a concise executive assistant. Always output valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
                 response_format={"type": "json_object"}
             )
             raw = response.choices[0].message.content.strip()
             data = json.loads(raw)
-            data.setdefault("subject", subject)
-            data.setdefault("sender", sender)
-            data.setdefault("one_line_summary", "Summary not available.")
-            data.setdefault("action_items", [])
-            data.setdefault("urgency", "Medium")
-            return EmailSummary.model_validate(data)
+            return EmailSummary(
+                subject=data.get("subject", subject),
+                sender=data.get("sender", sender),
+                one_line_summary=data.get("one_line_summary", "Summary not provided."),
+                action_items=data.get("action_items", []),
+                urgency=data.get("urgency", "Medium")
+            )
         except Exception as e:
-            print(f"[!] Groq processing error: {e}. Falling back to default.")
-            return EmailSummary(subject=subject, sender=sender, one_line_summary=subject, action_items=[], urgency="Medium")
+            print(f"[!] Groq API Call Failed: {repr(e)}")
+            urgency = "Low" if any(w in (sender + subject).lower() for w in ["deal", "sale", "travelzoo", "zulily", "facebook", "pinterest"]) else "Medium"
+            return EmailSummary(subject=subject, sender=sender, one_line_summary=f"Update from {sender}", action_items=[], urgency=urgency)
 
-    # Local Execution via Ollama
     try:
         import ollama
         client = ollama.Client(timeout=120)
         response = client.chat(
             model="llama3.1:8b",
             messages=[
-                {"role": "system", "content": "You are a concise executive assistant. Output valid JSON only."},
+                {"role": "system", "content": "You are a concise executive assistant. Always output valid JSON."},
                 {"role": "user", "content": prompt}
             ],
             format="json"
         )
         raw = response['message']['content'].strip()
-        if raw.startswith("```"):
-            raw = raw.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
-        data.setdefault("subject", subject)
-        data.setdefault("sender", sender)
-        data.setdefault("one_line_summary", "Summary not available.")
-        data.setdefault("action_items", [])
-        data.setdefault("urgency", "Medium")
         return EmailSummary.model_validate(data)
     except Exception as e:
-        print(f"[!] Ollama fallback error: {e}")
-        return EmailSummary(subject=subject, sender=sender, one_line_summary=subject, action_items=[], urgency="Medium")
+        print(f"[!] Ollama API Call Failed: {repr(e)}")
+        return EmailSummary(subject=subject, sender=sender, one_line_summary="Local inference unavailable.", action_items=[], urgency="Medium")
 
 def send_digest_email(service, summaries):
     today_str = datetime.now().strftime('%A, %B %d, %Y')
@@ -145,7 +142,10 @@ def send_digest_email(service, summaries):
         "=" * 60 + "\n"
     ]
 
-    for s in summaries:
+    priority_order = {"HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    sorted_summaries = sorted(summaries, key=lambda s: priority_order.get(s.urgency.upper(), 4))
+
+    for s in sorted_summaries:
         body_lines.append(f"[{s.urgency.upper()}] {s.subject}")
         body_lines.append(f"From: {s.sender}")
         body_lines.append(f"Summary: {s.one_line_summary}")
