@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
-import ollama
+# import ollama (lazy loaded)
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
